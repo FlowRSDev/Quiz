@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>节前保密自测</title>
+
+<!-- 外部 CSS -->
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h1 id="pageTitle">在线答题测试</h1>
+
+<div class="user-card">
+    <div class="user-card-title">请先填写您的信息</div>
+    <div class="user-card-fields">
+        <div class="field">
+            <label for="inputName">姓名 <span style="color:#e74c3c;">*</span></label>
+            <input type="text" id="inputName" placeholder="请输入您的姓名" maxlength="20">
+        </div>
+        <div class="field">
+            <label for="inputDept">科室 / 单位 <span style="color:#e74c3c;">*</span></label>
+            <input type="text" id="inputDept" placeholder="请输入您的科室或单位" maxlength="30">
+        </div>
+    </div>
+</div>
+
+<div class="info-bar">
+    <span id="infoLeft">共 0 道题</span>
+    <span id="infoRight">满分 100 分</span>
+</div>
+
+<form id="quizForm"></form>
+
+<!-- 成绩卡片 -->
+<div class="modal-overlay" id="scoreModal">
+    <div class="score-card" id="scoreCard">
+        <div class="card-header">
+            <h2>保密自测成绩单</h2>
+            <div class="subtitle" id="cardDate"></div>
+        </div>
+        <div class="card-user-info">
+            <div class="item">
+                <div class="lbl">姓名</div>
+                <div class="val" id="cardName">—</div>
+            </div>
+            <div class="item">
+                <div class="lbl">科室 / 单位</div>
+                <div class="val" id="cardDept">—</div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="score-display">
+                <div class="label">最 终 得 分</div>
+                <div class="score-num">
+                    <span id="finalScore">0</span>
+                    <span class="total">/ 100</span>
+                </div>
+                <div class="comment" id="scoreComment"></div>
+                <div class="stat-row">
+                    <div class="stat-item">
+                        <div class="num" id="statCorrect">0</div>
+                        <div class="txt">答对题数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="num" id="statTotal">0</div>
+                        <div class="txt">总题数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="num" id="statRate">0%</div>
+                        <div class="txt">得分率</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="card-footer">
+            <button onclick="closeScoreModal()">关闭成绩单</button>
+        </div>
+        <div class="tip-text">📷 请使用手机截屏功能，保存此成绩单作为凭证</div>
+    </div>
+</div>
+
+<!-- 管理员面板 -->
+<div class="admin-overlay" id="adminModal">
+    <div class="admin-panel">
+        <div class="admin-header">
+            <h2>答题统计（管理员）</h2>
+            <div class="actions">
+                <button onclick="exportCSV()">导出 Excel</button>
+                <button onclick="clearAllRecords()">清空记录</button>
+                <button onclick="closeAdmin()">关闭</button>
+            </div>
+        </div>
+        <div class="admin-body" id="adminBody"></div>
+    </div>
+</div>
+
+<script src="config.js"></script>
+
+<script src="quiz-data.js"></script>
+
+<script>
+/* =========================================================
+ *  常量
+ * ========================================================= */
+const STORAGE_KEY = 'baomi_quiz_records_v1';
+
+
+function checkPassword(input) {
+    try {
+        // 用 Base64 解码 Files 中的密文
+        const decoded = atob(window.APP_CONFIG.adminPasswordEncoded);
+        return input === decoded;
+    } catch (e) {
+        console.error('密码校验失败：', e);
+        return false;
+    }
+}
+
+/* =========================================================
+ *  渲染题目
+ * ========================================================= */
+function renderQuiz(quizData) {
+    document.getElementById('pageTitle').textContent = quizData.title;
+    document.title = quizData.title;
+
+    const form = document.getElementById('quizForm');
+    let html = '';
+    let totalQuestions = 0;
+    let totalScore = 0;
+
+    quizData.sections.forEach((section, sIndex) => {
+        totalQuestions += section.questions.length;
+        totalScore += section.questions.length * section.score;
+
+        html += `<div class="section">`;
+        html += `<div class="section-title">${escapeHtml(section.name)}</div>`;
+
+        section.questions.forEach((q, qIndex) => {
+            const inputType = section.type === 'multiple' ? 'checkbox' : 'radio';
+            const nameAttr = `q_${sIndex}_${qIndex}`;
+
+            html += `<div class="question" data-type="${section.type}" data-answer="${q.answer}" data-score="${section.score}">`;
+            html += `<div class="question-text">${qIndex + 1}. ${escapeHtml(q.question)}</div>`;
+            html += `<div class="options">`;
+            for (const [key, value] of Object.entries(q.options)) {
+                html += `<label><input type="${inputType}" name="${nameAttr}" value="${key}"> ${key}. ${escapeHtml(value)}</label>`;
+            }
+            html += `</div>`;
+            html += `<div class="correct-answer">正确答案：${q.answer}</div>`;
+            html += `</div>`;
+        });
+
+        html += `</div>`;
+    });
+
+    html += `<button type="button" class="btn-submit" id="submitBtn" onclick="calculateScore()">提交答案并查看分数</button>`;
+    html += `<button type="button" class="btn-view-score" id="viewScoreBtn" onclick="showLastScore()">查看我的成绩单</button>`;
+    html += `<button type="button" class="btn-reset" onclick="resetQuiz()">重新答题</button>`;
+
+    form.innerHTML = html;
+
+    document.getElementById('infoLeft').textContent = `共 ${totalQuestions} 道题`;
+    document.getElementById('infoRight').textContent = `满分 ${totalScore} 分`;
+
+    const records = getRecords();
+    if (records.length > 0) {
+        document.getElementById('viewScoreBtn').style.display = 'block';
+    }
+}
+
+/* =========================================================
+ *  判分 + 保存记录
+ * ========================================================= */
+function calculateScore() {
+    const nameInput = document.getElementById('inputName');
+    const deptInput = document.getElementById('inputDept');
+    const name = nameInput.value.trim();
+    const dept = deptInput.value.trim();
+
+    nameInput.classList.remove('error');
+    deptInput.classList.remove('error');
+
+    let hasError = false;
+    if (!name) { nameInput.classList.add('error'); hasError = true; }
+    if (!dept) { deptInput.classList.add('error'); hasError = true; }
+
+    if (hasError) {
+        alert('请先填写姓名和科室/单位后再提交！');
+        if (!name) nameInput.focus();
+        else deptInput.focus();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+    }
+
+    const questions = document.querySelectorAll('.question');
+    let totalScore = 0, correctCount = 0, fullScore = 0;
+
+    document.querySelectorAll('.correct-answer').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.question').forEach(q => q.classList.remove('correct', 'wrong'));
+
+    questions.forEach(q => {
+        const type = q.getAttribute('data-type');
+        const correctAnswer = q.getAttribute('data-answer');
+        const score = parseInt(q.getAttribute('data-score'), 10);
+        fullScore += score;
+
+        let userAnswer = '';
+        if (type === 'multiple') {
+            const selected = q.querySelectorAll('input[type="checkbox"]:checked');
+            userAnswer = Array.from(selected).map(cb => cb.value).sort().join('');
+        } else {
+            const selected = q.querySelector('input[type="radio"]:checked');
+            if (selected) userAnswer = selected.value;
+        }
+
+        if (userAnswer === correctAnswer) {
+            q.classList.add('correct');
+            correctCount++;
+            totalScore += score;
+        } else {
+            q.classList.add('wrong');
+            q.querySelector('.correct-answer').style.display = 'block';
+        }
+    });
+
+    const percentage = Math.round((totalScore / fullScore) * 100);
+
+    const record = {
+        name: name,
+        dept: dept,
+        score: totalScore,
+        fullScore: fullScore,
+        correctCount: correctCount,
+        totalQuestions: questions.length,
+        percentage: percentage,
+        time: new Date().toISOString()
+    };
+    saveRecord(record);
+
+    const submitBtn = document.getElementById('submitBtn');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = '已提交，请查看成绩单';
+    }
+    document.getElementById('viewScoreBtn').style.display = 'block';
+
+    showScoreModal(record);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* =========================================================
+ *  显示成绩卡片
+ * ========================================================= */
+function showScoreModal(record) {
+    const modal = document.getElementById('scoreModal');
+    const percentage = record.percentage;
+
+    let comment = '';
+    if (percentage === 100) comment = '恭喜您，全对！您具有很强的保密意识！';
+    else if (percentage >= 90) comment = '优秀！您的保密意识强！';
+    else if (percentage >= 80) comment = '良好，继续保持警惕，加强学习！';
+    else if (percentage >= 60) comment = '及格，您需增强保密意识，进一步学习保密知识与技能。';
+    else comment = '还需加强学习哦～，加油！';
+
+    document.getElementById('cardName').textContent = record.name;
+    document.getElementById('cardDept').textContent = record.dept;
+    document.getElementById('finalScore').textContent = record.score;
+    document.getElementById('scoreComment').textContent = comment;
+    document.getElementById('statCorrect').textContent = record.correctCount;
+    document.getElementById('statTotal').textContent = record.totalQuestions;
+    document.getElementById('statRate').textContent = percentage + '%';
+
+    const d = new Date(record.time);
+    document.getElementById('cardDate').textContent =
+        `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function showLastScore() {
+    const records = getRecords();
+    if (records.length === 0) {
+        alert('没有找到您的成绩记录');
+        return;
+    }
+    const last = records[records.length - 1];
+    showScoreModal(last);
+}
+
+function closeScoreModal() {
+    document.getElementById('scoreModal').classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+/* =========================================================
+ *  本地存储
+ * ========================================================= */
+function getRecords() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveRecord(record) {
+    try {
+        const records = getRecords();
+        records.push(record);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+    } catch (e) {
+        console.warn('保存记录失败：', e);
+    }
+}
+
+/* =========================================================
+ *  管理员面板
+ * ========================================================= */
+function openAdmin() {
+    const modal = document.getElementById('adminModal');
+    document.getElementById('adminBody').innerHTML = `
+        <div class="admin-login">
+            <h3>请输入管理员密码</h3>
+            <input type="password" id="adminPwd" placeholder="请输入密码" onkeydown="if(event.key==='Enter')checkAdminPwd()">
+            <button onclick="checkAdminPwd()">进入</button>
+            <div class="err" id="adminErr"></div>
+        </div>
+    `;
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    setTimeout(() => {
+        const input = document.getElementById('adminPwd');
+        if (input) input.focus();
+    }, 300);
+}
+
+function checkAdminPwd() {
+    const pwd = document.getElementById('adminPwd').value;
+    if (checkPassword(pwd)) {
+        renderAdminPanel();
+    } else {
+        document.getElementById('adminErr').textContent = '密码错误，请重试';
+    }
+}
+
+function renderAdminPanel() {
+    const records = getRecords();
+    const body = document.getElementById('adminBody');
+
+    if (records.length === 0) {
+        body.innerHTML = '<div class="admin-empty">暂无答题记录</div>';
+        return;
+    }
+
+    const totalCount = records.length;
+    const avgScore = (records.reduce((s, r) => s + r.score, 0) / totalCount).toFixed(1);
+    const maxScore = Math.max(...records.map(r => r.score));
+    const passCount = records.filter(r => r.percentage >= 60).length;
+    const passRate = Math.round((passCount / totalCount) * 100);
+
+    let html = `
+        <div class="admin-stats">
+            <div class="admin-stat-box">
+                <div class="num">${totalCount}</div>
+                <div class="lbl">答题人数</div>
+            </div>
+            <div class="admin-stat-box">
+                <div class="num">${avgScore}</div>
+                <div class="lbl">平均分</div>
+            </div>
+            <div class="admin-stat-box">
+                <div class="num">${maxScore}</div>
+                <div class="lbl">最高分</div>
+            </div>
+            <div class="admin-stat-box">
+                <div class="num">${passRate}%</div>
+                <div class="lbl">及格率</div>
+            </div>
+        </div>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>姓名</th>
+                    <th>科室/单位</th>
+                    <th>得分</th>
+                    <th>得分率</th>
+                    <th>答题时间</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    const sorted = [...records].reverse();
+    sorted.forEach((r, i) => {
+        const d = new Date(r.time);
+        const timeStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        html += `
+            <tr>
+                <td>${i + 1}</td>
+                <td>${escapeHtml(r.name)}</td>
+                <td>${escapeHtml(r.dept)}</td>
+                <td class="score-cell">${r.score} / ${r.fullScore}</td>
+                <td>${r.percentage}%</td>
+                <td>${timeStr}</td>
+            </tr>
+        `;
+    });
+
+    html += `</tbody></table>`;
+    body.innerHTML = html;
+}
+
+function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+function closeAdmin() {
+    document.getElementById('adminModal').classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+function exportCSV() {
+    const records = getRecords();
+    if (records.length === 0) {
+        alert('暂无记录可导出');
+        return;
+    }
+
+    let csv = '\uFEFF';
+    csv += '序号,姓名,科室/单位,得分,满分,得分率,答对题数,总题数,答题时间\n';
+
+    records.forEach((r, i) => {
+        const d = new Date(r.time);
+        const timeStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        csv += `${i + 1},"${r.name}","${r.dept}",${r.score},${r.fullScore},${r.percentage}%,${r.correctCount},${r.totalQuestions},${timeStr}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `保密自测成绩_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function clearAllRecords() {
+    if (!confirm('确定要清空本机所有答题记录吗？此操作不可恢复！')) return;
+    localStorage.removeItem(STORAGE_KEY);
+    renderAdminPanel();
+    alert('已清空本机所有答题记录');
+}
+
+/* =========================================================
+ *  重新答题
+ * ========================================================= */
+function resetQuiz() {
+    if (!confirm('确定要重新答题吗？已填写的答案将被清空。')) return;
+    document.getElementById('quizForm').reset();
+    document.querySelectorAll('.correct-answer').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.question').forEach(q => q.classList.remove('correct', 'wrong'));
+    const submitBtn = document.getElementById('submitBtn');
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '提交答案并查看分数';
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* =========================================================
+ *  tools function
+ * ========================================================= */
+function escapeHtml(str) {
+    if (str === undefined || str === null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/* =========================================================
+ *  start
+ * ========================================================= */
+window.addEventListener('DOMContentLoaded', function () {
+    if (!window.quizData) {
+        document.getElementById('pageTitle').textContent = '题库加载失败';
+        document.getElementById('quizForm').innerHTML =
+            '<div class="section"><div class="section-title">未找到题库数据</div>' +
+            '<p>请检查 quiz-data.js 文件是否存在。</p></div>';
+        return;
+    }
+    renderQuiz(window.quizData);
+});
+</script>
+
+<div class="copyright-line">
+    © 2026 节前保密自测<span class="admin-dot" onclick="openAdmin()">·</span>版权所有
+</div>
+</body>
+</html>
